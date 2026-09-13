@@ -2,6 +2,16 @@
 
 基于对 `https://xk.nju.edu.cn/` 选课系统的逆向分析，用 Python 实现登录、课程列表查询与抢课（志愿式选课）。
 
+## 技术栈
+
+- **语言**：Python 3
+- **HTTP 客户端**：[requests](https://pypi.org/project/requests/)
+- **加密**：
+  - [pycryptodome](https://pypi.org/project/pycryptodome/) —— 选课参数 AES-128-ECB 加密
+  - 纯 Python 实现的 DES（三密钥）—— 登录密码加密，与网页 `des.min.js` 逐字节一致
+- **验证码点选**：tkinter（标准库，无需额外安装）
+- **标准库**：`argparse`、`getpass`、`json`、`base64`、`datetime` 等
+
 ## 功能
 
 - 登录（含验证码：自动弹窗，在图上按顺序点击 4 个点）
