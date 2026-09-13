@@ -114,6 +114,18 @@ python grab.py --token <TOKEN> --weu <WEU>
 
 > `_WEU` 是 WAF 校验 cookie，`elective/*` 接口必须携带。程序在登录时也会自动获取（`login.do` 响应会下发），一般无需手动传。
 
+## 专业课（ZY）说明
+
+专业课列表结构与其他类别不同：`list --menu ZY` 返回的是「课程 + 内嵌教学班列表」，会逐门展开显示每个教学班的**教师 / 校区 / 地点 / 已选容量 / 教学班ID**。选课时：
+
+```bash
+# 先列出专业课，记下目标教学班的 teachingClassID
+python grab.py --token <TOKEN> list --menu ZY
+
+# 用教学班ID抢课（提交接口与其他类别相同，courseKind 会自动取 ZY 菜单的 "1"）
+python grab.py --token <TOKEN> select --id <教学班ID> --menu ZY
+```
+
 ## 说明
 
 - **登录密码加密**：DES（三密钥 `this/password/is`）→ 大写 hex → Base64，已与网页逐字节对齐。

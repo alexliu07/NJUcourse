@@ -217,9 +217,40 @@ def fmt_time_place(c):
     return c.get("teachingPlace") or ""
 
 
+def print_zy_courses(courses, limit=30):
+    """专业课（ZY）列表：课程 + 内嵌教学班 tcList"""
+    if not courses:
+        print("（没有课程数据）")
+        return
+    for i, c in enumerate(courses[:limit], 1):
+        num = c.get("courseNumber") or ""
+        name = c.get("courseName") or ""
+        credit = c.get("credit") or ""
+        nature = c.get("courseNatureName") or ""
+        mode = c.get("typeName") or c.get("electiveType") or ""
+        tc = c.get("tcList") or []
+        bjs = c.get("number") or len(tc)
+        print(f"[{i}] {num} {name}  学分{credit} {nature} {mode}  班级数{bjs}")
+        for j, x in enumerate(tc, 1):
+            chosen = "★" if str(x.get("isChoose")) == "1" else " "
+            teacher = (x.get("teacherName") or "")[:14]
+            campus = x.get("campusName") or ""
+            place = x.get("teachingPlace") or ""
+            cnt = x.get("numberOfSelected") or "-"
+            cap = x.get("classCapacity") or "-"
+            print(f"      {j}. {chosen}教师:{teacher:<14} 校区:{campus} 地点:{place} "
+                  f"已选 {cnt}/{cap}  教学班ID: {x.get('teachingClassID')}")
+    if len(courses) > limit:
+        print(f"  ... 共 {len(courses)} 门，只显示前 {limit} 门")
+
+
 def print_courses(courses, limit=30):
     if not courses:
         print("（没有课程数据）")
+        return
+    # 专业课（ZY）是「课程 + tcList」结构，单独展示
+    if any(c.get("tcList") is not None for c in courses[:1]):
+        print_zy_courses(courses, limit)
         return
     print(f"{'序号':>4} {'课程号':<12} {'课程名':<16} {'学分':>4} {'教师':<10} "
           f"{'时间地点':<26} {'校区':<8} {'已选/容量':>9}  教学班ID")
