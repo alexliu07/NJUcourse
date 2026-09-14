@@ -446,8 +446,21 @@ class NJUXKClient:
         return j.get("dataList") or []
 
     def search_courses(self, menu_code, keyword, page_size=50):
-        """按课程名/课程号/教师 搜索"""
+        """按课程名/课程号/教师 搜索（单页）"""
         return self.list_courses(menu_code, page_number=0, page_size=page_size, query_content=keyword)
+
+    def list_all_courses(self, menu_code, page_size=50, query_content="", max_pages=200):
+        """自动翻页拉取全部课程，直到某页不满 page_size 为止"""
+        all_courses = []
+        for page in range(max_pages):
+            courses = self.list_courses(menu_code, page_number=page,
+                                        page_size=page_size, query_content=query_content)
+            if not courses:
+                break
+            all_courses.extend(courses)
+            if len(courses) < page_size:
+                break
+        return all_courses
 
     # ---- 选课 ----
     def select_course(self, teaching_class_id, menu_code, course_kind=None, operation_type="1"):

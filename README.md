@@ -46,6 +46,9 @@ python grab.py --token <TOKEN> list --menu GG01
 # 搜索课程
 python grab.py --token <TOKEN> list --menu KZY --keyword 微积分
 
+# 列表会自动翻页拉全，终端内分页浏览（回车下一页，q 退出）；--size 调整每页条数
+python grab.py --token <TOKEN> list --menu GG01 --size 30
+
 # 立即抢课（单次，--id 为教学班ID teachingClassID）
 python grab.py --token <TOKEN> select --id 2026202717800104001 --menu GG01
 

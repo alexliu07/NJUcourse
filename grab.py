@@ -271,6 +271,23 @@ def print_courses(courses, limit=30):
         print(f"  ... 共 {len(courses)} 门，只显示前 {limit} 门")
 
 
+def print_courses_paged(courses, page_size=20):
+    """终端内分页浏览课程列表（回车下一页，q 退出）"""
+    if not courses:
+        print_courses([])
+        return
+    total_pages = (len(courses) + page_size - 1) // page_size
+    for i in range(total_pages):
+        chunk = courses[i * page_size:(i + 1) * page_size]
+        print(f"\n===== 第 {i + 1}/{total_pages} 页（共 {len(courses)} 门）=====")
+        print_courses(chunk, limit=page_size)
+        if i < total_pages - 1:
+            s = input("回车看下一页，输入 q 退出: ").strip().lower()
+            if s in ("q", "quit", "exit"):
+                print("已退出浏览")
+                break
+
+
 # ---------------- 流程 ----------------
 
 def do_login(client, batch_code=None):
@@ -301,8 +318,8 @@ def interactive(client):
             menu = input("分类代码(如 KZY/GG01/ZY): ").strip().upper()
             kw = input("搜索关键词(直接回车=全部): ").strip()
             try:
-                courses = client.search_courses(menu, kw, page_size=50)
-                print_courses(courses)
+                courses = client.list_all_courses(menu, query_content=kw, page_size=50)
+                print_courses_paged(courses)
             except XkError as e:
                 print(f"[错误] {e}")
         elif cmd in ("s", "select"):
@@ -418,8 +435,7 @@ def main():
     ap.add_argument("--number", help="课程号（收藏夹展示用，可选）")
     ap.add_argument("--keyword", default="", help="搜索关键词")
     ap.add_argument("--kind", dest="kind", help="courseKind（一般无需指定）")
-    ap.add_argument("--page", type=int, default=0)
-    ap.add_argument("--size", type=int, default=10)
+    ap.add_argument("--size", type=int, default=20, help="列表每页显示条数，默认 20")
     ap.add_argument("--at", dest="at", help="定时抢课时间，格式 YYYY-MM-DD HH:MM:SS")
     ap.add_argument("--interval", type=float, default=1.0, help="自动抢课提交间隔(秒)，默认 1.0")
     ap.add_argument("--retry", type=int, default=0, help="最大提交次数，0=不限（默认）")
@@ -469,8 +485,8 @@ def main():
             if not args.menu:
                 print("请用 --menu 指定分类代码")
                 sys.exit(1)
-            courses = client.search_courses(args.menu.upper(), args.keyword, page_size=max(args.size, 10))
-            print_courses(courses)
+            courses = client.list_all_courses(args.menu.upper(), query_content=args.keyword, page_size=50)
+            print_courses_paged(courses, max(args.size, 1))
         elif args.command in ("select", "watch"):
             if not args.menu or not args.tid:
                 print("请用 --menu 和 --id 指定分类与教学班ID")
