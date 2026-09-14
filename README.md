@@ -34,7 +34,7 @@ pip install -r requirements.txt
 # 交互式完整流程（登录 -> 菜单 -> 列课程 -> 选课）
 python grab.py
 
-# 已有 token，跳过登录
+# 已有 token，跳过登录（学号会自动读取上次登录保存的 session.json，也可用 --student 指定）
 python grab.py --token <TOKEN>
 
 # 查看课程分类菜单
