@@ -28,11 +28,30 @@
 pip install -r requirements.txt
 ```
 
-也可以直接用打包好的 exe（无需安装 Python）：
+## exe 使用（无需 Python）
 
-- 到 GitHub 仓库的 **Actions** 页，选择最新的 **Build Windows EXE** 运行记录，在 Artifacts 里下载 `nju-grab-windows`。
-- 或本地手动打包：`pip install pyinstaller && pyinstaller --onefile --name nju-grab --hidden-import tkinter grab.py`
-- 每次 push 到 `main` 分支，GitHub Actions 会自动用 PyInstaller 打包单文件 exe 并上传为 artifact。
+GitHub Actions 会自动打包单文件 exe，也可以本地打包。exe 用法与源码相同，只是把 `python grab.py` 换成 `nju-grab.exe`。
+
+**获取 exe：**
+
+- 到 GitHub 仓库的 **Actions** 页 → 选最新一次 **Build Windows EXE** → Artifacts 里下载 `nju-grab-windows`（解压得到 `nju-grab.exe`）。
+- 或本地打包：`pip install pyinstaller && pyinstaller --onefile --name nju-grab --hidden-import tkinter grab.py`。
+
+**exe 用法示例：**
+
+```bash
+# 交互式完整流程（登录 -> 菜单 -> 列课程 -> 选课）
+nju-grab.exe
+
+# 已有 token，跳过登录（学号自动读 session.json，也可 --student 指定）
+nju-grab.exe --token <TOKEN> list --menu GG01
+
+# 到点自动抢收藏夹全部课程（3 线程并行，0.3s 间隔）
+nju-grab.exe --token <TOKEN> --student 261180197 favgrab --at "2026-09-14 13:30:00" --interval 0.3 --threads 3
+```
+
+> 所有命令与参数和源码版完全一致（`menus` / `list` / `select` / `watch` / `favadd` / `favlist` / `favremove` / `favgrab`），详见下方「用法」。
+> `favorites.json` 和 `session.json` 会生成在 exe 同目录；验证码弹窗（tkinter）在 exe 里同样可用。
 
 
 ## 用法
