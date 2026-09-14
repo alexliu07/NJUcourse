@@ -83,7 +83,7 @@ python grab.py --token <TOKEN> --student 261180197 favgrab --interval 0.3 --thre
 - 收藏数据存在本地 `favorites.json`，与网站自带收藏无关，不依赖登录。
 - `favgrab` 会循环遍历收藏夹，成功一门移除一门，直到全部抢完或 `Ctrl+C` 停止。
 - `favgrab` 支持 `--at` / `--interval` / `--retry` 参数，同 `watch`。
-- `favgrab --threads N`：开启 N 个线程**并行抢不同课程**（默认 3），适合收藏夹有多门课需要同时抢的场景。
+- `favgrab --threads N`：创建 N 个 worker 线程的线程池，**轮流遍历收藏夹里的每一门课**（失败放回队尾继续重试），课程数多于线程数也能全部遍历到。
 
 ### 自动抢课参数
 

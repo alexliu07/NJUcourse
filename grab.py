@@ -31,7 +31,6 @@ import sys
 import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from nju_xk import NJUXKClient, XkError
@@ -133,62 +132,90 @@ def loop_grab_favorites(client, favs, interval=1.0, max_retries=0):
 
 
 def loop_grab_favorites_parallel(client, favs, interval=1.0, max_retries=0, threads=3):
-    """线程池并行抢收藏夹：每门课一个任务，最多 threads 个线程同时跑。"""
+    """线程池并行抢收藏夹：threads 个 worker 轮流遍历收藏夹，每一门课都会被尝试到。"""
     if not favs:
         print("收藏夹为空，无法抢课")
         return False
     total = len(favs)
-    stop = threading.Event()
-    lock = threading.Lock()
+    pending = list(favs)
     done = []
-    counter = {"n": 0}
+    stop = threading.Event()
+    cond = threading.Condition()
+    inflight = [0]
+    counter = [0]
 
-    def grab_one(fav):
+    def _label(fav):
+        return f"{fav.get('courseName') or ''}({fav.get('courseNumber') or fav.get('teachingClassId')})"
+
+    def attempt(c, fav):
+        """单次尝试一门课，返回 'done' / 'retry' / 'stop'"""
+        try:
+            submit = c.select_course(fav["teachingClassId"], fav["menuCode"], fav.get("courseKind"))
+            sc = str(submit.get("code"))
+            if sc == "1":
+                polled = c.poll(fav["teachingClassId"])
+                if polled and str(polled.get("code")) == "1":
+                    print(f"[√] {_label(fav)} 抢课成功！{polled.get('msg') or ''}")
+                    return "done"
+                print(f"[×] {_label(fav)} 已受理但未通过，稍后重试...")
+                return "retry"
+            if sc == "302":
+                print("[!] 登录已失效(302)，请重新登录获取 token 后重试")
+                return "stop"
+            print(f"[-] {_label(fav)}: code={sc} {submit.get('msg') or ''}")
+            return "retry"
+        except XkError as e:
+            print(f"[-] {_label(fav)} 请求异常: {e}")
+            return "retry"
+
+    def worker():
         c = client.clone_for_thread()
-        label = f"{fav.get('courseName') or ''}({fav.get('courseNumber') or fav.get('teachingClassId')})"
         while not stop.is_set():
-            with lock:
-                if max_retries and counter["n"] >= max_retries:
+            with cond:
+                if max_retries and counter[0] >= max_retries:
                     stop.set()
-                    return False
-                counter["n"] += 1
-            try:
-                submit = c.select_course(fav["teachingClassId"], fav["menuCode"], fav.get("courseKind"))
-                sc = str(submit.get("code"))
-                if sc == "1":
-                    polled = c.poll(fav["teachingClassId"])
-                    if polled and str(polled.get("code")) == "1":
-                        with lock:
-                            done.append(fav)
-                        print(f"[√] {label} 抢课成功！{polled.get('msg') or ''}")
-                        return True
-                    print(f"[×] {label} 已受理但未通过，继续重试...")
-                elif sc == "302":
-                    print("[!] 登录已失效(302)，请重新登录获取 token 后重试")
+                    cond.notify_all()
+                    return
+                # 拿一门待抢课程；若队列暂时为空但还有课程在处理中，则等待
+                while not pending and not stop.is_set():
+                    if inflight[0] == 0:
+                        return  # 全部处理完
+                    cond.wait(timeout=0.5)
+                if stop.is_set():
+                    return
+                fav = pending.pop(0)
+                inflight[0] += 1
+                counter[0] += 1
+            result = attempt(c, fav)
+            with cond:
+                inflight[0] -= 1
+                if result == "done":
+                    done.append(fav)
+                elif result == "retry":
+                    pending.append(fav)  # 放回末尾，下一轮再试
+                else:  # stop（302）
                     stop.set()
-                    return False
-                else:
-                    print(f"[-] {label}: code={sc} {submit.get('msg') or ''}")
-            except XkError as e:
-                print(f"[-] {label} 请求异常: {e}")
-            if stop.is_set():
-                return False
+                cond.notify_all()
             time.sleep(interval)
-        return False
 
     print(f"[*] 并行抢收藏夹 {total} 门课：线程数={threads} 间隔={interval}s "
           f"({'不限次数' if not max_retries else '最多' + str(max_retries) + '次'})  Ctrl+C 停止")
     start = time.time()
+    workers = [threading.Thread(target=worker, daemon=True) for _ in range(max(1, threads))]
+    for t in workers:
+        t.start()
     try:
-        with ThreadPoolExecutor(max_workers=threads) as pool:
-            futures = [pool.submit(grab_one, f) for f in favs]
-            for fut in as_completed(futures):
-                fut.result()
+        for t in workers:
+            t.join()
     except KeyboardInterrupt:
         stop.set()
+        with cond:
+            cond.notify_all()
+        for t in workers:
+            t.join(timeout=3)
         print(f"\n[!] 已手动停止（成功 {len(done)} 门，用时 {time.time() - start:.1f}s）")
         return False
-    print(f"[√] 并行抢课结束：成功 {len(done)}/{total} 门，共提交 {counter['n']} 次，用时 {time.time() - start:.1f}s")
+    print(f"[√] 并行抢课结束：成功 {len(done)}/{total} 门，共提交 {counter[0]} 次，用时 {time.time() - start:.1f}s")
     return len(done) == total
 
 
