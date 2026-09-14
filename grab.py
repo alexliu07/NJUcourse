@@ -205,14 +205,15 @@ def loop_grab_favorites_parallel(client, favs, interval=1.0, max_retries=0, thre
     for t in workers:
         t.start()
     try:
-        for t in workers:
-            t.join()
+        # 用可中断的轮询等待，而不是阻塞式 join（否则 Windows 下 Ctrl+C 无法打断）
+        while any(t.is_alive() for t in workers):
+            time.sleep(0.1)
     except KeyboardInterrupt:
         stop.set()
         with cond:
             cond.notify_all()
         for t in workers:
-            t.join(timeout=3)
+            t.join(timeout=1.0)
         print(f"\n[!] 已手动停止（成功 {len(done)} 门，用时 {time.time() - start:.1f}s）")
         return False
     print(f"[√] 并行抢课结束：成功 {len(done)}/{total} 门，共提交 {counter[0]} 次，用时 {time.time() - start:.1f}s")
