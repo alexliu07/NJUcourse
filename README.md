@@ -75,11 +75,15 @@ python grab.py favremove --id 2026202717800104001
 # 自动抢收藏夹里所有课程（到点开抢，0.3s 间隔）
 python grab.py --token <TOKEN> --student 261180197 favgrab \
     --at "2026-09-14 13:30:00" --interval 0.3
+
+# 并行抢收藏夹：3 个线程同时抢不同的课（--threads 可调）
+python grab.py --token <TOKEN> --student 261180197 favgrab --interval 0.3 --threads 3
 ```
 
 - 收藏数据存在本地 `favorites.json`，与网站自带收藏无关，不依赖登录。
 - `favgrab` 会循环遍历收藏夹，成功一门移除一门，直到全部抢完或 `Ctrl+C` 停止。
 - `favgrab` 支持 `--at` / `--interval` / `--retry` 参数，同 `watch`。
+- `favgrab --threads N`：开启 N 个线程**并行抢不同课程**（默认 3），适合收藏夹有多门课需要同时抢的场景。
 
 ### 自动抢课参数
 

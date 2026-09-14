@@ -504,6 +504,19 @@ class NJUXKClient:
             "xklcdm": self.batch_code,
         })
 
+    def clone_for_thread(self):
+        """为多线程并行抢课复制一个独立客户端（共享 token/学籍/WAF cookie）"""
+        c = NJUXKClient(token=self.token)
+        c.student = dict(self.student) if self.student else {}
+        c.batch = dict(self.batch) if self.batch else {}
+        c.menus = list(self.menus)
+        c._warmed = True
+        try:
+            c.session.cookies.update(self.session.cookies)
+        except Exception:
+            pass
+        return c
+
     def grab(self, teaching_class_id, menu_code, course_kind=None, poll_attempts=12):
         """选课 + 轮询，返回 (submit_resp, poll_resp)"""
         submit = self.select_course(teaching_class_id, menu_code, course_kind)

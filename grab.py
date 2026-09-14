@@ -29,7 +29,9 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from nju_xk import NJUXKClient, XkError
@@ -128,6 +130,66 @@ def loop_grab_favorites(client, favs, interval=1.0, max_retries=0):
     except KeyboardInterrupt:
         print(f"\n[!] 已手动停止（成功 {len(done)} 门，剩 {len(pending)} 门，用时 {time.time() - start:.1f}s）")
         return False
+
+
+def loop_grab_favorites_parallel(client, favs, interval=1.0, max_retries=0, threads=3):
+    """线程池并行抢收藏夹：每门课一个任务，最多 threads 个线程同时跑。"""
+    if not favs:
+        print("收藏夹为空，无法抢课")
+        return False
+    total = len(favs)
+    stop = threading.Event()
+    lock = threading.Lock()
+    done = []
+    counter = {"n": 0}
+
+    def grab_one(fav):
+        c = client.clone_for_thread()
+        label = f"{fav.get('courseName') or ''}({fav.get('courseNumber') or fav.get('teachingClassId')})"
+        while not stop.is_set():
+            with lock:
+                if max_retries and counter["n"] >= max_retries:
+                    stop.set()
+                    return False
+                counter["n"] += 1
+            try:
+                submit = c.select_course(fav["teachingClassId"], fav["menuCode"], fav.get("courseKind"))
+                sc = str(submit.get("code"))
+                if sc == "1":
+                    polled = c.poll(fav["teachingClassId"])
+                    if polled and str(polled.get("code")) == "1":
+                        with lock:
+                            done.append(fav)
+                        print(f"[√] {label} 抢课成功！{polled.get('msg') or ''}")
+                        return True
+                    print(f"[×] {label} 已受理但未通过，继续重试...")
+                elif sc == "302":
+                    print("[!] 登录已失效(302)，请重新登录获取 token 后重试")
+                    stop.set()
+                    return False
+                else:
+                    print(f"[-] {label}: code={sc} {submit.get('msg') or ''}")
+            except XkError as e:
+                print(f"[-] {label} 请求异常: {e}")
+            if stop.is_set():
+                return False
+            time.sleep(interval)
+        return False
+
+    print(f"[*] 并行抢收藏夹 {total} 门课：线程数={threads} 间隔={interval}s "
+          f"({'不限次数' if not max_retries else '最多' + str(max_retries) + '次'})  Ctrl+C 停止")
+    start = time.time()
+    try:
+        with ThreadPoolExecutor(max_workers=threads) as pool:
+            futures = [pool.submit(grab_one, f) for f in favs]
+            for fut in as_completed(futures):
+                fut.result()
+    except KeyboardInterrupt:
+        stop.set()
+        print(f"\n[!] 已手动停止（成功 {len(done)} 门，用时 {time.time() - start:.1f}s）")
+        return False
+    print(f"[√] 并行抢课结束：成功 {len(done)}/{total} 门，共提交 {counter['n']} 次，用时 {time.time() - start:.1f}s")
+    return len(done) == total
 
 
 # ---------------- 验证码（人机验证） ----------------
@@ -459,6 +521,7 @@ def main():
     ap.add_argument("--at", dest="at", help="定时抢课时间，格式 YYYY-MM-DD HH:MM:SS")
     ap.add_argument("--interval", type=float, default=1.0, help="自动抢课提交间隔(秒)，默认 1.0")
     ap.add_argument("--retry", type=int, default=0, help="最大提交次数，0=不限（默认）")
+    ap.add_argument("--threads", type=int, default=3, help="并行抢收藏夹的线程数，默认 3")
     ap.add_argument("--loop", action="store_true", help="select 时循环提交，等价于 watch")
     args = ap.parse_args()
 
@@ -576,7 +639,10 @@ def main():
                 sys.exit(1)
             if args.at:
                 wait_until(args.at, client)
-            loop_grab_favorites(client, favs, args.interval, args.retry)
+            if args.threads > 1:
+                loop_grab_favorites_parallel(client, favs, args.interval, args.retry, args.threads)
+            else:
+                loop_grab_favorites(client, favs, args.interval, args.retry)
     except XkError as e:
         print(f"[错误] {e}")
         sys.exit(1)
