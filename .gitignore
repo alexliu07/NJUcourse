@@ -5,3 +5,6 @@ venv/
 session.json
 favorites.json
 favorites.copy.json
+build/
+dist/
+*.spec

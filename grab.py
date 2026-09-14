@@ -35,8 +35,14 @@ from datetime import datetime
 
 from nju_xk import NJUXKClient, XkError
 
-FAV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "favorites.json")
-SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session.json")
+# PyInstaller 打包后 sys.frozen 为 True，数据文件放在 exe 同目录（而不是临时解包目录）
+if getattr(sys, "frozen", False):
+    APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+FAV_FILE = os.path.join(APP_DIR, "favorites.json")
+SESSION_FILE = os.path.join(APP_DIR, "session.json")
 
 
 def load_session():

@@ -28,6 +28,13 @@
 pip install -r requirements.txt
 ```
 
+也可以直接用打包好的 exe（无需安装 Python）：
+
+- 到 GitHub 仓库的 **Actions** 页，选择最新的 **Build Windows EXE** 运行记录，在 Artifacts 里下载 `nju-grab-windows`。
+- 或本地手动打包：`pip install pyinstaller && pyinstaller --onefile --name nju-grab --hidden-import tkinter grab.py`
+- 每次 push 到 `main` 分支，GitHub Actions 会自动用 PyInstaller 打包单文件 exe 并上传为 artifact。
+
+
 ## 用法
 
 ```bash
