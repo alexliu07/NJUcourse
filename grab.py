@@ -35,6 +35,24 @@ from datetime import datetime
 from nju_xk import NJUXKClient, XkError
 
 FAV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "favorites.json")
+SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session.json")
+
+
+def load_session():
+    if not os.path.exists(SESSION_FILE):
+        return {}
+    try:
+        with open(SESSION_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_session(student_code, token):
+    data = {"studentCode": student_code, "token": token}
+    with open(SESSION_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 # ---------------- 本地收藏夹 ----------------
@@ -297,9 +315,11 @@ def do_login(client, batch_code=None):
     pts = solve_captcha(vcode["image"])
     print(f"验证码点: {pts}")
     info = client.login(name, pwd, pts, vcode["uuid"], vcode["vtoken"], batch_code=batch_code)
+    save_session(client.student_code, client.token)
     print(f"\n登录成功：{info.get('name')} ({info.get('code')})")
     print(f"当前轮次：{client.batch.get('name')}  开放时间: {client.batch.get('beginTime')}")
-    print(f"token: {client.token}\n")
+    print(f"token: {client.token}")
+    print(f"(已保存学号与 token 到 {os.path.basename(SESSION_FILE)}，下次可用 --token 直接免登录)\n")
     return client
 
 
@@ -465,7 +485,15 @@ def main():
             # token 模式：需要学籍信息与轮次的命令
             need_student = args.command in ("menus", "list", "select", "watch", "favgrab") or args.command is None
             if need_student and not client.student:
-                student_code = args.student or input("学号: ").strip()
+                # 学号优先级：--student 参数 > 上次登录保存的 session.json
+                student_code = args.student
+                if not student_code:
+                    saved = load_session().get("studentCode")
+                    if saved:
+                        student_code = saved
+                        print(f"[*] 使用已保存的学号 {saved}（如需换账号请加 --student 参数）")
+                if not student_code:
+                    student_code = input("学号: ").strip()
                 try:
                     client.load_student_info(student_code, args.batch)
                     print(f"当前轮次：{client.batch.get('name')}  开放时间: {client.batch.get('beginTime')}")
