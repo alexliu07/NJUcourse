@@ -34,6 +34,10 @@ GitHub Actions 会自动打包单文件 exe，也可以本地打包。exe 用法
 
 **获取 exe：**
 
+- 通过 Release 下载（推荐）：
+  1. 打开仓库首页，点击右侧 **Releases**（或顶部 **Releases**）。
+  2. 进入最新版本，在 **Assets** 中下载 `nju-grab.exe`（或包含 exe 的压缩包）。
+  3. 若下载的是压缩包，先解压，再双击运行 `nju-grab.exe`。
 - 到 GitHub 仓库的 **Actions** 页 → 选最新一次 **Build Windows EXE** → Artifacts 里下载 `nju-grab-windows`（解压得到 `nju-grab.exe`）。
 - 或本地打包：`pip install pyinstaller && pyinstaller --onefile --name nju-grab --hidden-import tkinter grab.py`。
 
