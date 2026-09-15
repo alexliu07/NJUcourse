@@ -10,6 +10,7 @@
   - [pycryptodome](https://pypi.org/project/pycryptodome/) —— 选课参数 AES-128-ECB 加密
   - 纯 Python 实现的 DES（三密钥）—— 登录密码加密，与网页 `des.min.js` 逐字节一致
 - **验证码点选**：tkinter（标准库，无需额外安装）
+- **图形界面美化**：[Sun Valley ttk theme](https://github.com/rdbende/Sun-Valley-ttk-theme)
 - **标准库**：`argparse`、`getpass`、`json`、`base64`、`datetime` 等
 
 ## 功能
@@ -59,6 +60,15 @@ nju-grab.exe --token <TOKEN> --student 261180197 favgrab --at "2026-09-14 13:30:
 
 
 ## 用法
+
+### 图形界面版（保留命令行版）
+
+```bash
+python gui.py
+```
+
+- GUI 版完整保留登录、菜单查询、课程查询、单次/循环抢课、本地收藏夹与收藏夹批量抢课功能。
+- 命令行版仍使用 `python grab.py`，参数与原来完全一致。
 
 ```bash
 # 交互式完整流程（登录 -> 菜单 -> 列课程 -> 选课）

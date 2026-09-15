@@ -25,10 +25,18 @@ jobs:
       - name: Build with PyInstaller
         run: |
           pyinstaller --onefile --name nju-grab --hidden-import tkinter grab.py
+          pyinstaller --onefile --windowed --name nju-gui gui.py
 
-      - name: Upload artifact
+      - name: Upload CLI artifact
         uses: actions/upload-artifact@v4
         with:
           name: nju-grab-windows
           path: dist/nju-grab.exe
+          if-no-files-found: error
+
+      - name: Upload GUI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nju-gui-windows
+          path: dist/nju-gui.exe
           if-no-files-found: error
