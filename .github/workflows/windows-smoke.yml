@@ -1,0 +1,73 @@
+name: Windows Smoke Test
+
+# 真 Windows 上验证打包结果：控制台/重定向两种输出方式 + GUI 能否启动。
+# 重定向那一步是编码回归的护栏：stdout 不是控制台时 Python 会退回 ANSI 代码页，
+# 非中文代码页的系统上打印中文会崩（见 grab.py 顶部的 reconfigure）。
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: 打包与冒烟测试
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 环境信息（代码页决定重定向输出编码）
+        shell: pwsh
+        run: |
+          chcp
+          "ANSI codepage: " + [System.Text.Encoding]::Default.WebName
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: 逻辑自检（真 Windows Tk，不联网、不需要账号）
+        run: python tests/check_gui_logic.py
+
+      - name: 打包 EXE
+        run: |
+          pyinstaller --onefile --name nju-grab --hidden-import tkinter grab.py
+          pyinstaller --onefile --windowed --name nju-gui gui.py
+
+      - name: CLI 冒烟：控制台输出
+        shell: pwsh
+        run: |
+          .\dist\nju-grab.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "nju-grab.exe --help 退出码 $LASTEXITCODE" }
+
+      - name: CLI 冒烟：重定向输出（编码回归护栏）
+        shell: pwsh
+        run: |
+          cmd /c "dist\nju-grab.exe favlist > fav.txt 2>&1"
+          if ($LASTEXITCODE -ne 0) { Get-Content fav.txt -Raw; throw "重定向 favlist 退出码 $LASTEXITCODE" }
+          cmd /c "dist\nju-grab.exe --help > help.txt 2>&1"
+          if ($LASTEXITCODE -ne 0) { Get-Content help.txt -Raw; throw "重定向 --help 退出码 $LASTEXITCODE" }
+          $fav = Get-Content fav.txt -Raw -Encoding utf8
+          $help = Get-Content help.txt -Raw -Encoding utf8
+          Write-Host "favlist 输出: $fav"
+          if ($fav -notmatch "收藏夹为空") { throw "重定向输出缺少预期中文，编码可能回归" }
+          if ($help -notmatch "最大提交次数") { throw "--help 重定向输出缺少预期中文" }
+
+      - name: GUI 冒烟：启动后窗口存在
+        shell: pwsh
+        run: |
+          Start-Process -FilePath .\dist\nju-gui.exe | Out-Null
+          Start-Sleep -Seconds 25
+          $procs = @(Get-Process -Name nju-gui -ErrorAction SilentlyContinue)
+          if ($procs.Count -eq 0) { throw "GUI 进程已退出（启动失败）" }
+          $titles = @($procs | ForEach-Object { $_.MainWindowTitle } | Where-Object { $_ })
+          Write-Host "窗口标题: $($titles -join ' | ')"
+          if (-not ($titles | Where-Object { $_ -match "NJU" })) {
+            throw "没有找到标题含 NJU 的窗口"
+          }
+          Stop-Process -Name nju-gui -Force
