@@ -24,7 +24,8 @@ jobs:
         shell: pwsh
         run: |
           chcp
-          "ANSI codepage: " + [System.Text.Encoding]::Default.WebName
+          "ANSICodePage: " + [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage
+          python -c "import sys,locale; print('python stdout:', sys.stdout.encoding, '| preferred:', locale.getpreferredencoding(False))"
 
       - name: 安装依赖
         run: |
@@ -32,6 +33,10 @@ jobs:
           pip install -r requirements.txt pyinstaller
 
       - name: 逻辑自检（真 Windows Tk，不联网、不需要账号）
+        id: selfcheck
+        # 这一条失败时仍然继续跑后面的 CLI/GUI 冒烟，方便一眼看到全部问题；
+        # 最后用「汇总」步骤把 job 拉红，避免自检的失败被吞掉。
+        continue-on-error: true
         run: python tests/check_gui_logic.py
 
       - name: 打包 EXE
@@ -71,3 +76,9 @@ jobs:
             throw "没有找到标题含 NJU 的窗口"
           }
           Stop-Process -Name nju-gui -Force
+
+      - name: 汇总
+        if: always()
+        shell: pwsh
+        run: |
+          if ('${{ steps.selfcheck.outcome }}' -ne 'success') { throw "逻辑自检未通过" }
