@@ -35,20 +35,6 @@ from datetime import datetime
 
 from nju_xk import NJUXKClient, XkError
 
-# Windows 输出编码：Python 只在「真控制台」下用 UTF-8 通信，stdout 被重定向或
-# 接管道时会退回 ANSI 代码页。非中文代码页的系统（英文版 Windows 等）上，
-# 打印中文会直接 UnicodeEncodeError 崩掉，例如:
-#     nju-grab.exe list --menu GG01 > 课程.txt
-# 这里统一改成 UTF-8，编码不了的字符用替换符兜底。
-if sys.platform == "win32":
-    for _stream in (sys.stdout, sys.stderr):
-        if _stream is None:          # PyInstaller --windowed 下没有标准流
-            continue
-        try:
-            _stream.reconfigure(encoding="utf-8", errors="replace")
-        except (AttributeError, ValueError, OSError):
-            pass
-
 # PyInstaller 打包后 sys.frozen 为 True，数据文件放在 exe 同目录（而不是临时解包目录）
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
