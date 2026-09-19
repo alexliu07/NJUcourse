@@ -1,11 +1,11 @@
-# -*- coding: utf-8 -*-
 """南京大学选课系统 GUI（保留原命令行版 grab.py）"""
 
 import base64
+import queue
 import threading
 import time
-from datetime import datetime
 import tkinter as tk
+from datetime import datetime
 from tkinter import messagebox, ttk
 
 from grab import load_favorites, load_session, save_favorites, save_session
@@ -17,6 +17,16 @@ except Exception:
     sv_ttk = None
 
 
+def _remaining_favorites(favs, done):
+    """抢课成功后从收藏夹剔除的项。
+
+    按对象身份剔除（而不是值比较）：收藏夹里允许存在同 ID 的重复项，
+    值比较会把没成功的那条一起删掉。favs 必须是传进抢课循环的同一个列表对象。
+    """
+    done_ids = {id(f) for f in done}
+    return [f for f in favs if id(f) not in done_ids]
+
+
 class CaptchaDialog(tk.Toplevel):
     def __init__(self, parent, image_data_url):
         super().__init__(parent)
@@ -25,29 +35,40 @@ class CaptchaDialog(tk.Toplevel):
         self.result = None
         self.pts = []
         self.transient(parent)
-        self.grab_set()
-
-        if not image_data_url or "," not in image_data_url:
-            raise XkError("验证码图片数据为空")
-        b64 = image_data_url.split(",", 1)[1]
-        gif = base64.b64decode(b64)
-        self.photo = tk.PhotoImage(data=gif)
-
-        ttk.Label(self, text="请按顺序点击图中 4 个点").pack(padx=8, pady=(8, 4))
-        self.canvas = tk.Canvas(self, width=self.photo.width(), height=self.photo.height(), highlightthickness=0)
-        self.canvas.pack(padx=8, pady=4)
-        self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
-        self.canvas.bind("<Button-1>", self._click)
-
-        self.tip = ttk.Label(self, text="已点击 0/4")
-        self.tip.pack(pady=4)
-
-        btns = ttk.Frame(self)
-        btns.pack(fill="x", padx=8, pady=(0, 8))
-        ttk.Button(btns, text="重置", command=self._reset).pack(side="left")
-        ttk.Button(btns, text="取消", command=self._cancel).pack(side="right")
-
         self.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        try:
+            # 先校验并解析图片：任何一步失败都不能留下一个抓着输入焦点的空白窗口
+            if not image_data_url or "," not in image_data_url:
+                raise XkError("验证码图片数据为空")
+            b64 = image_data_url.split(",", 1)[1]
+            gif = base64.b64decode(b64)
+            self.photo = tk.PhotoImage(data=gif)
+
+            ttk.Label(self, text="请按顺序点击图中 4 个点").pack(padx=8, pady=(8, 4))
+            self.canvas = tk.Canvas(self, width=self.photo.width(), height=self.photo.height(), highlightthickness=0)
+            self.canvas.pack(padx=8, pady=4)
+            self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
+            self.canvas.bind("<Button-1>", self._click)
+
+            self.tip = ttk.Label(self, text="已点击 0/4")
+            self.tip.pack(pady=4)
+
+            btns = ttk.Frame(self)
+            btns.pack(fill="x", padx=8, pady=(0, 8))
+            ttk.Button(btns, text="重置", command=self._reset).pack(side="left")
+            ttk.Button(btns, text="取消", command=self._cancel).pack(side="right")
+
+            # grab 必须在窗口可见之后调用，否则部分平台会直接 grab 失败
+            self.wait_visibility()
+            self.grab_set()
+        except Exception:
+            try:
+                self.grab_release()
+            except tk.TclError:
+                pass
+            self.destroy()
+            raise
 
     def _click(self, e):
         if len(self.pts) >= 4:
@@ -78,10 +99,49 @@ class App:
         self.client = NJUXKClient()
         self.watch_stop = threading.Event()
         self.favgrab_stop = threading.Event()
+        self.watch_thread = None
+        self.favgrab_thread = None
+        self._ui_queue = queue.Queue()
 
         self._build_top()
         self._build_tabs()
         self._load_saved_session()
+        self._pump_ui()
+
+    # ---------- 线程安全 ----------
+    # Tk 只能在主线程操作：后台线程一律通过 _post_ui 投递，由主线程执行。
+
+    def _post_ui(self, fn):
+        """把一个函数排到主线程执行（可从任意线程调用）"""
+        self._ui_queue.put(fn)
+
+    def _pump_ui(self):
+        """主线程定时消费后台线程投递的日志与界面更新"""
+        while True:
+            try:
+                fn = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                fn()
+            except Exception as e:  # 单条更新失败不能打断整个泵
+                print(f"[ui] 更新失败: {e}")
+        self.root.after(100, self._pump_ui)
+
+    def _run_async(self, name, work, on_done=None, alert=False):
+        """后台线程跑网络操作，结果回到主线程，避免界面卡死"""
+        def runner():
+            try:
+                result = work()
+            except Exception as e:
+                self._log(f"[错误] {name}: {e}")
+                if alert:
+                    self._post_ui(lambda: messagebox.showerror(name, str(e)))
+                return
+            if on_done is not None:
+                self._post_ui(lambda: on_done(result))
+
+        threading.Thread(target=runner, daemon=True).start()
 
     def _build_top(self):
         bar = ttk.Frame(self.root)
@@ -256,7 +316,15 @@ class App:
         self.refresh_favorites()
 
     def _log(self, text):
+        """线程安全：任意线程都能调用，真正的写入在主线程执行"""
+        self._post_ui(lambda: self._append_log(text))
+
+    def _append_log(self, text, max_lines=2000):
         self.log_text.insert("end", text + "\n")
+        # 长时间循环抢课会不断写日志，裁剪掉太旧的行，避免无限膨胀
+        lines = int(self.log_text.index("end-1c").split(".")[0])
+        if lines > max_lines:
+            self.log_text.delete("1.0", f"{lines - max_lines + 1}.0")
         self.log_text.see("end")
 
     def _load_saved_session(self):
@@ -290,23 +358,28 @@ class App:
         if not name or not pwd:
             messagebox.showerror("错误", "请输入学号和密码")
             return
+        # 登录成功前不动 self.client，避免失败一次就把原有会话/token 清掉
+        client = NJUXKClient(weu=self.weu_var.get().strip() or None)
         try:
-            weu = self.weu_var.get().strip()
-            self.client = NJUXKClient(weu=weu or None)
-            v = self.client.get_vcode()
+            v = client.get_vcode()
             dlg = CaptchaDialog(self.root, v.get("image"))
             self.root.wait_window(dlg)
             if not dlg.result:
                 raise XkError("已取消：未点满 4 个点")
-            self.client.login(name, pwd, dlg.result, v.get("uuid"), v.get("vtoken"), self.batch_var.get().strip() or None)
-            save_session(self.client.student_code, self.client.token)
-            self.token_var.set(self.client.token or "")
-            self.student_var.set(self.client.student_code or "")
-            self._set_status()
-            self.refresh_menus()
-            messagebox.showinfo("成功", "登录成功")
+            client.login(name, pwd, dlg.result, v.get("uuid"), v.get("vtoken"),
+                         self.batch_var.get().strip() or None)
         except Exception as e:
             messagebox.showerror("登录失败", str(e))
+            return
+        self.client = client
+        save_session(client.student_code, client.token)
+        self.token_var.set(client.token or "")
+        self.student_var.set(client.student_code or "")
+        self.login_pwd.set("")          # 登录成功后不再把密码留在输入框里
+        self._set_status()
+        messagebox.showinfo("成功", "登录成功")
+        # 刷新菜单是附带动作，它失败不能反过来报「登录失败」
+        self.refresh_menus()
 
     def login_with_token(self):
         token = self.token_var.get().strip()
@@ -322,15 +395,17 @@ class App:
         if not student:
             messagebox.showerror("错误", "请填写学号（或先用账号密码登录一次）")
             return
+        client = NJUXKClient(token=token, weu=self.weu_var.get().strip() or None)
         try:
-            self.client = NJUXKClient(token=token, weu=self.weu_var.get().strip() or None)
-            self.client.load_student_info(student, self.batch_var.get().strip() or None)
-            save_session(self.client.student_code, self.client.token)
-            self._set_status()
-            self.refresh_menus()
-            messagebox.showinfo("成功", "token 登录成功")
+            client.load_student_info(student, self.batch_var.get().strip() or None)
         except Exception as e:
             messagebox.showerror("失败", str(e))
+            return
+        self.client = client
+        save_session(client.student_code, client.token)
+        self._set_status()
+        messagebox.showinfo("成功", "token 登录成功")
+        self.refresh_menus()
 
     def refresh_menus(self):
         if not self._require_login():
@@ -343,6 +418,37 @@ class App:
             m = menu_map[c]
             self.menu_text.insert("end", f"{c}  {m.get('menuName', '')}  courseKind={m.get('courseKind', '')}\n")
 
+    @staticmethod
+    def _course_rows(courses, menu, kind):
+        """把课程响应摊平成教学班行（字段映射只留一份）"""
+        for c in courses:
+            tc_list = c.get("tcList")
+            if tc_list:
+                for tc in tc_list:
+                    yield (
+                        tc.get("teachingClassID") or "",
+                        c.get("courseNumber") or "",
+                        c.get("courseName") or "",
+                        tc.get("teacherName") or "",
+                        tc.get("campusName") or "",
+                        tc.get("numberOfSelected") or "-",
+                        tc.get("classCapacity") or "-",
+                        menu,
+                        kind,
+                    )
+            else:
+                yield (
+                    c.get("teachingClassID") or "",
+                    c.get("courseNumber") or "",
+                    c.get("courseName") or "",
+                    c.get("teacherName") or "",
+                    c.get("campusName") or c.get("campus") or "",
+                    c.get("numberOfSelected") or "-",
+                    c.get("classCapacity") or "-",
+                    menu,
+                    kind,
+                )
+
     def query_courses(self):
         if not self._require_login():
             return
@@ -351,42 +457,30 @@ class App:
             messagebox.showerror("错误", "请输入分类代码")
             return
         kw = self.keyword_var.get().strip()
+        # 菜单校验和 Tk 变量读取都放在主线程，后台线程不再碰 Tk
         try:
-            courses = self.client.list_all_courses(menu, page_size=50, query_content=kw)
-            self.course_tree.delete(*self.course_tree.get_children())
-            for c in courses:
-                if c.get("tcList") is not None:
-                    for tc in c.get("tcList") or []:
-                        self.course_tree.insert("", "end", values=(
-                            tc.get("teachingClassID") or "",
-                            c.get("courseNumber") or "",
-                            c.get("courseName") or "",
-                            tc.get("teacherName") or "",
-                            tc.get("campusName") or "",
-                            tc.get("numberOfSelected") or "-",
-                            tc.get("classCapacity") or "-",
-                            menu,
-                            self.client.course_kind_of(menu),
-                        ))
-                else:
-                    self.course_tree.insert("", "end", values=(
-                        c.get("teachingClassID") or "",
-                        c.get("courseNumber") or "",
-                        c.get("courseName") or "",
-                        c.get("teacherName") or "",
-                        c.get("campusName") or c.get("campus") or "",
-                        c.get("numberOfSelected") or "-",
-                        c.get("classCapacity") or "-",
-                        menu,
-                        self.client.course_kind_of(menu),
-                    ))
-            self._log(f"[课程] {menu} 查询完成，共 {len(self.course_tree.get_children())} 条教学班记录")
-        except Exception as e:
-            messagebox.showerror("查询失败", str(e))
+            kind = self.client.course_kind_of(menu)
+        except XkError as e:
+            messagebox.showerror("错误", str(e))
+            return
+        client = self.client.clone_for_thread()
+        self._log(f"[课程] 查询 {menu} {kw or '(全部)'} ...")
 
-    def _wait_until(self, at_str, stop_event):
+        def done(courses):
+            rows = list(self._course_rows(courses, menu, kind))
+            self.course_tree.delete(*self.course_tree.get_children())
+            for r in rows:
+                self.course_tree.insert("", "end", values=r)
+            self._log(f"[课程] {menu} 查询完成，共 {len(rows)} 条教学班记录")
+
+        self._run_async("查询失败",
+                        lambda: client.list_all_courses(menu, page_size=50, query_content=kw),
+                        done, alert=True)
+
+    def _wait_until(self, at_str, stop_event, client=None):
         if not at_str:
             return
+        client = client or self.client
         target = datetime.strptime(at_str, "%Y-%m-%d %H:%M:%S")
         if target <= datetime.now():
             return
@@ -396,7 +490,7 @@ class App:
             if time.time() - last_ping > 45:
                 last_ping = time.time()
                 try:
-                    self.client.keep_alive()
+                    client.keep_alive()
                 except Exception as e:
                     self._log(f"[!] 保活失败: {e}")
             time.sleep(0.1)
@@ -406,24 +500,33 @@ class App:
             return
         menu = self.grab_menu_var.get().strip().upper()
         tid = self.grab_tid_var.get().strip()
+        kind = self.grab_kind_var.get().strip() or None
         if not menu or not tid:
             messagebox.showerror("错误", "请填写分类代码和教学班ID")
             return
-        try:
-            submit, polled = self.client.grab(tid, menu, self.grab_kind_var.get().strip() or None)
+        client = self.client.clone_for_thread()
+        self._log(f"[提交] 单次抢课 {tid}@{menu} ...")
+
+        def done(res):
+            submit, polled = res
             self._log(f"[提交] code={submit.get('code')} msg={submit.get('msg')}")
             if polled:
                 self._log(f"[处理] code={polled.get('code')} msg={polled.get('msg')}")
             else:
                 self._log("[处理] 轮询超时")
-        except Exception as e:
-            self._log(f"[错误] {e}")
+
+        self._run_async("抢课", lambda: client.grab(tid, menu, kind), done)
 
     def start_watch(self):
         if not self._require_login():
             return
+        if self.watch_thread is not None and self.watch_thread.is_alive():
+            messagebox.showinfo("提示", "循环抢课已在运行中，请先点「停止循环」")
+            return
         menu = self.grab_menu_var.get().strip().upper()
         tid = self.grab_tid_var.get().strip()
+        kind = self.grab_kind_var.get().strip() or None
+        at_str = self.grab_at_var.get().strip()
         if not menu or not tid:
             messagebox.showerror("错误", "请填写分类代码和教学班ID")
             return
@@ -433,14 +536,18 @@ class App:
         except ValueError:
             messagebox.showerror("错误", "间隔/次数格式不正确")
             return
+        if interval <= 0:
+            messagebox.showerror("错误", "间隔秒必须大于 0")
+            return
 
         self.watch_stop.clear()
+        client = self.client.clone_for_thread()
 
         def run():
             count = 0
             start = time.time()
             try:
-                self._wait_until(self.grab_at_var.get().strip(), self.watch_stop)
+                self._wait_until(at_str, self.watch_stop, client)
             except ValueError:
                 self._log("[错误] 定时格式应为 YYYY-MM-DD HH:MM:SS")
                 return
@@ -448,16 +555,18 @@ class App:
             while not self.watch_stop.is_set():
                 count += 1
                 try:
-                    submit = self.client.select_course(tid, menu, self.grab_kind_var.get().strip() or None)
+                    submit = client.select_course(tid, menu, kind)
                     sc = str(submit.get("code"))
                     if sc == "1":
-                        polled = self.client.poll(tid)
+                        polled = client.poll(tid)
                         if polled and str(polled.get("code")) == "1":
                             self._log(f"[√] 第 {count} 次成功: {polled.get('msg') or ''}")
+                            self.watch_stop.set()
                             return
                         self._log(f"[×] 第 {count} 次未通过: {(polled or {}).get('msg') or ''}")
                     elif sc == "302":
                         self._log("[!] token 已失效(302)")
+                        self.watch_stop.set()
                         return
                     else:
                         self._log(f"[-] 第 {count} 次 code={sc} {submit.get('msg') or ''}")
@@ -465,11 +574,19 @@ class App:
                     self._log(f"[-] 第 {count} 次异常: {e}")
                 if retry and count >= retry:
                     self._log(f"[!] 已达最大次数 {retry}")
+                    self.watch_stop.set()
                     return
                 time.sleep(interval)
             self._log(f"[!] 已停止循环抢课（提交 {count} 次，用时 {time.time() - start:.1f}s）")
 
-        threading.Thread(target=run, daemon=True).start()
+        def runner():
+            try:
+                run()
+            finally:
+                self.watch_thread = None
+
+        self.watch_thread = threading.Thread(target=runner, daemon=True)
+        self.watch_thread.start()
 
     def stop_watch(self):
         self.watch_stop.set()
@@ -517,18 +634,24 @@ class App:
         if not sel:
             messagebox.showinfo("提示", "请先选择要移除的收藏项")
             return
-        ids = {self.fav_tree.item(i, "values")[0] for i in sel}
-        favs = [f for f in load_favorites() if f.get("teachingClassId") not in ids]
+        # 同一个教学班ID可能在不同分类下都收藏过，按 (教学班ID, 分类) 精确删除
+        keys = {(self.fav_tree.item(i, "values")[0], self.fav_tree.item(i, "values")[1]) for i in sel}
+        favs = [f for f in load_favorites()
+                if (f.get("teachingClassId"), f.get("menuCode")) not in keys]
         save_favorites(favs)
         self.refresh_favorites()
 
     def start_favgrab(self):
         if not self._require_login():
             return
+        if self.favgrab_thread is not None and self.favgrab_thread.is_alive():
+            messagebox.showinfo("提示", "收藏夹抢课已在运行中，请先点「停止抢收藏夹」")
+            return
         favs = load_favorites()
         if not favs:
             messagebox.showerror("错误", "收藏夹为空")
             return
+        at_str = self.fav_at_var.get().strip()
         try:
             interval = float(self.fav_interval_var.get().strip() or "1")
             retry = int(self.fav_retry_var.get().strip() or "0")
@@ -536,8 +659,12 @@ class App:
         except ValueError:
             messagebox.showerror("错误", "间隔/次数/线程数格式不正确")
             return
+        if interval <= 0:
+            messagebox.showerror("错误", "间隔秒必须大于 0")
+            return
 
         self.favgrab_stop.clear()
+        client = self.client.clone_for_thread()
 
         def attempt(c, fav):
             label = f"{fav.get('courseName') or ''}({fav.get('courseNumber') or fav.get('teachingClassId')})"
@@ -597,7 +724,7 @@ class App:
                     time.sleep(interval)
 
             try:
-                self._wait_until(self.fav_at_var.get().strip(), self.favgrab_stop)
+                self._wait_until(at_str, self.favgrab_stop, client)
             except ValueError:
                 self._log("[错误] 收藏夹定时格式应为 YYYY-MM-DD HH:MM:SS")
                 return
@@ -613,12 +740,18 @@ class App:
                 time.sleep(0.2)
 
             if done:
-                remain = [f for f in load_favorites() if f not in done]
-                save_favorites(remain)
-                self.refresh_favorites()
+                save_favorites(_remaining_favorites(favs, done))
+                self._post_ui(self.refresh_favorites)   # UI 更新交回主线程
             self._log(f"[*] 收藏夹抢课结束：成功 {len(done)}/{len(favs)}")
 
-        threading.Thread(target=run_parallel, daemon=True).start()
+        def runner():
+            try:
+                run_parallel()
+            finally:
+                self.favgrab_thread = None
+
+        self.favgrab_thread = threading.Thread(target=runner, daemon=True)
+        self.favgrab_thread.start()
 
     def stop_favgrab(self):
         self.favgrab_stop.set()

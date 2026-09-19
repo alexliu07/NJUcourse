@@ -29,6 +29,17 @@
 pip install -r requirements.txt
 ```
 
+## 自检脚本
+
+`tests/check_gui_logic.py` 在真实 Tk 窗口里跑界面代码（抢课客户端替换成假桩），**不联网、不需要账号**，用来验证循环抢课的线程控制、验证码弹窗、收藏夹读写和日志裁剪等逻辑：
+
+```bash
+python tests/check_gui_logic.py          # 有桌面环境
+xvfb-run -a python tests/check_gui_logic.py   # 无头 Linux 服务器
+```
+
+退出码 0 表示全部通过。
+
 ## exe 使用（无需 Python）
 
 GitHub Actions 会自动打包单文件 exe，也可以本地打包。exe 用法与源码相同，只是把 `python grab.py` 换成 `nju-grab.exe`。

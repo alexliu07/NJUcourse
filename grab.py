@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
+r"""
 南京大学选课系统 抢课程序
 
 依赖: pip install requests pycryptodome
@@ -45,6 +45,21 @@ FAV_FILE = os.path.join(APP_DIR, "favorites.json")
 SESSION_FILE = os.path.join(APP_DIR, "session.json")
 
 
+def _write_json_atomic(path, data):
+    """先写临时文件再原子替换。
+
+    直接覆盖写时如果中途被关闭/杀掉，原文件会变成半截 JSON；而
+    load_favorites()/load_session() 遇到坏文件是静默返回空的，
+    等于用户收藏夹被无声清空。原子替换可以避免这一点。
+    """
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
 def load_session():
     if not os.path.exists(SESSION_FILE):
         return {}
@@ -58,8 +73,7 @@ def load_session():
 
 def save_session(student_code, token):
     data = {"studentCode": student_code, "token": token}
-    with open(SESSION_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    _write_json_atomic(SESSION_FILE, data)
 
 
 # ---------------- 本地收藏夹 ----------------
@@ -77,8 +91,7 @@ def load_favorites(path=FAV_FILE):
 
 
 def save_favorites(favs, path=FAV_FILE):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(favs, f, ensure_ascii=False, indent=2)
+    _write_json_atomic(path, favs)
 
 
 def print_favorites(favs):
